@@ -38,6 +38,7 @@ num_epochs = 100
 lr = 0.0002
 beta1 = 0.5
 ngpu = 1
+gp_weight = 10
 
 dataset = dset.ImageFolder(root=dataroot,
                            transform=transforms.Compose([
@@ -112,53 +113,57 @@ for epoch in range(num_epochs):
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
         ###########################
-        ## Train with all-real batch
         netD.zero_grad()
-        real_cpu = data[0].to(device)
-        b_size = real_cpu.size(0)
-        label = torch.full((b_size,), real_label, device=device)
-        output = netD(real_cpu).view(-1)
-        errD_real = criterion(output, label)
-        errD_real.backward()
-        D_x = output.mean().item()
-        ## Train with all-fake batch
+
+        real = data[0].to(device)
+        b_size = real.size(0)
+        read_d = netD(real).mean()
+
         noise = torch.randn(b_size, nz, 1, 1, device=device)
-        fake = netG(noise)
-        label.fill_(fake_label)
-        output = netD(fake.detach()).view(-1)
-        errD_fake = criterion(output, label)
-        errD_fake.backward()
-        D_G_z1 = output.mean().item()
-        errD = errD_real + errD_fake
-        # Update D
+        fake = netG(noise).detach()
+        fake_d = netD(fake).mean()
+
+        epsilon = torch.rand(b_size, 1, 1, 1).to(device)
+        interpolates = torch.tensor((epsilon * real + (1 - epsilon) * fake).data, requires_grad=True)
+        gradients = torch.autograd.grad(
+            netD(interpolates).view(b_size),
+            interpolates,
+            grad_outputs=torch.ones(b_size).to(device),
+            create_graph=True)[0]
+        gp = ((gradients.view(b_size, -1).norm(2, dim=1) - 1).pow(2)).mean()
+
+        loss_d_without_gp = -read_d + fake_d
+        loss_d = loss_d_without_gp + gp_weight * gp
+        loss_d.backward()
         optimizerD.step()
+
 
         ############################
         # (2) Update G network: maximize log(D(G(z)))
         ###########################
         netG.zero_grad()
-        label.fill_(real_label) 
-        output = netD(fake).view(-1)
-        errG = criterion(output, label)
-        errG.backward()
-        D_G_z2 = output.mean().item()
+
+        noise = torch.randn(b_size, nz, 1, 1, device=device)
+        fake = netG(noise)
+        fake_d = netD(fake).mean()
+
+        loss_g = -fake_d
+        loss_g.backward()
         optimizerG.step()
+
         
         # Output training stats
         if i % 1 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tLoss_D_Without_GP: %.4f'
                   % (epoch, num_epochs, i, len(dataloader),
-                     errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+                     loss_d.item(), loss_g.item(), loss_d_without_gp.item()))
         
-        # Save Losses for plotting later
-        G_losses.append(errG.item())
-        D_losses.append(errD.item())
         
         # Check how the generator is doing by saving G's output on fixed_noise
         if (iters % 1 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
             fake = netG(fixed_noise)
             vis_fake = (fake + 1) / 2
-            vis_real = (real_cpu + 1) / 2
+            vis_real = (real + 1) / 2
             writer.add_image("fake", vis_fake, iters)
             writer.add_image("real", vis_real[0:64], iters)
             
