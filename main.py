@@ -19,13 +19,6 @@ from network import Generator, Discriminator
 from tensorboardX import SummaryWriter
 from utils import *
 
-# Set random seem for reproducibility
-manualSeed = 999
-#manualSeed = random.randint(1, 10000) # use if you want new results
-print("Random Seed: ", manualSeed)
-random.seed(manualSeed)
-torch.manual_seed(manualSeed)
-
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/Animals_with_Attributes2/JPEGImages")
 parser.add_argument("--workers", type=int, default=2)
@@ -41,7 +34,14 @@ parser.add_argument("--lr", type=float, default=0.0002)
 parser.add_argument("--beta1", type=float, default=0.5)
 parser.add_argument("--gan_type", type=str, default="LogGAN")
 parser.add_argument("--gp_weight", type=float, default=10.)
+parser.add_argument("--tc_th", type=float, default=2.)
+parser.add_argument("--manualSeed", type=int, default=999)
 args = parser.parse_args()
+
+#manualSeed = random.randint(1, 10000) # use if you want new results
+print("Random Seed: ", args.manualSeed)
+random.seed(args.manualSeed)
+torch.manual_seed(args.manualSeed)
 
 dataset = dset.ImageFolder(root=args.dataroot,
                            transform=transforms.Compose([
@@ -78,7 +78,7 @@ criterion = nn.BCELoss()
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
-fixed_noise = torch.randn(64, args.nz, 1, 1, device=device)
+fixed_noise = torch.from_numpy(truncated_z_sample(64, args.nz, args.tc_th, args.manualSeed)).float().to(device)
 
 # Establish convention for real and fake labels during training
 real_label = 1
