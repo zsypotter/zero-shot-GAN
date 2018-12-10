@@ -117,11 +117,11 @@ for epoch in range(num_epochs):
 
         real = data[0].to(device)
         b_size = real.size(0)
-        read_d = netD(real).mean()
+        read_d = netD(real)
 
         noise = torch.randn(b_size, nz, 1, 1, device=device)
         fake = netG(noise).detach()
-        fake_d = netD(fake).mean()
+        fake_d = netD(fake)
 
         epsilon = torch.rand(b_size, 1, 1, 1).to(device)
         interpolates = torch.tensor((epsilon * real + (1 - epsilon) * fake).data, requires_grad=True)
@@ -132,7 +132,7 @@ for epoch in range(num_epochs):
             create_graph=True)[0]
         gp = ((gradients.view(b_size, -1).norm(2, dim=1) - 1).pow(2)).mean()
 
-        loss_d_without_gp = -read_d + fake_d
+        loss_d_without_gp = (-read_d + fake_d).mean()
         loss_d = loss_d_without_gp + gp_weight * gp
         loss_d.backward()
         optimizerD.step()
