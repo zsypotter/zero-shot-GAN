@@ -17,6 +17,7 @@ import matplotlib.animation as animation
 from IPython.display import HTML
 from network import Generator, Discriminator
 from tensorboardX import SummaryWriter
+from utils import *
 
 # Set random seem for reproducibility
 manualSeed = 999
@@ -38,6 +39,7 @@ parser.add_argument("--ngf", type=int, default=64)
 parser.add_argument("--num_epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=0.0002)
 parser.add_argument("--beta1", type=float, default=0.5)
+parser.add_argument("--gan_type", type=str, default="LogGAN")
 parser.add_argument("--gp_weight", type=float, default=10.)
 args = parser.parse_args()
 
@@ -54,15 +56,6 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
-
-
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
 
 # Create the generator
 netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf).to(device)
@@ -111,58 +104,22 @@ for epoch in range(args.num_epochs):
     # For each batch in the dataloader
     for i, data in enumerate(dataloader, 0):
         
-        ############################
-        # (1) Update D network
-        ###########################
-        netD.zero_grad()
-
-        real = data[0].to(device)
-        b_size = real.size(0)
-        real_d = netD(real)
-
-        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
-        fake = netG(noise).detach()
-        fake_d = netD(fake)
-
-        epsilon = torch.rand(b_size, 1, 1, 1).to(device)
-        interpolates = torch.tensor((epsilon * real + (1 - epsilon) * fake).data, requires_grad=True)
-        gradients = torch.autograd.grad(
-            netD(interpolates).view(b_size),
-            interpolates,
-            grad_outputs=torch.ones(b_size).to(device),
-            create_graph=True)[0]
-        gp = ((gradients.view(b_size, -1).norm(2, dim=1) - 1).pow(2)).mean()
-
-        loss_d_without_gp = (-real_d + fake_d).mean()
-        loss_d = loss_d_without_gp + args.gp_weight * gp
-        loss_d.backward()
-        optimizerD.step()
-
-
-        ############################
-        # (2) Update G network
-        ###########################
-        netG.zero_grad()
-
-        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
-        fake = netG(noise)
-        fake_d = netD(fake).mean()
-
-        loss_g = -fake_d
-        loss_g.backward()
-        optimizerG.step()
-
+        if args.gan_type == "WGAN":
+            loss_d, loss_g = wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args)
+        elif args.gan_type == "LogGAN" or args.gan_type == "MseGAN":
+            loss_d, loss_g = gan(data, netD, netG, optimizerD, optimizerG, device, args)
         
         # Output training stats
         if i % 1 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tLoss_D_Without_GP: %.4f'
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\t'
                   % (epoch, args.num_epochs, i, len(dataloader),
-                     loss_d.item(), loss_g.item(), loss_d_without_gp.item()))
+                     loss_d.item(), loss_g.item()))
         
         
         # Check how the generator is doing by saving G's output on fixed_noise
         if (iters % 1 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
             fake = netG(fixed_noise)
+            real = data[0].to(device)
             vis_fake = (fake + 1) / 2
             vis_real = (real + 1) / 2
             writer.add_image("fake", vis_fake, iters)
