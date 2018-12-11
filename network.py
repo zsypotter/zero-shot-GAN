@@ -42,7 +42,8 @@ class Discriminator(nn.Module):
         )
 
     def forward(self, input):
-        return self.main(input)
+        output = self.main(input)
+        return output
 
 #########################################################################
 # Generator Code
@@ -55,7 +56,7 @@ class Generator(nn.Module):
         self.nz = nz
         self.ndf = ndf
         self.ngf = ngf
-        self.main = nn.Sequential(
+        '''self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d( self.nz, self.ngf * 32, 4, 1, 0, bias=False),
             nn.BatchNorm2d(self.ngf * 32),
@@ -84,7 +85,36 @@ class Generator(nn.Module):
             nn.ConvTranspose2d( self.ngf, self.nc, 4, 2, 1, bias=False),
             nn.Tanh()
             # state size. (nc) x 256 x 256
+        )'''
+        self.main = nn.Sequential(
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d(self.nz, 768, 1, 1, 0),
+            # state size. (768) x 4 x 4
+            nn.ConvTranspose2d(768, 384, 5, 2, 0, bias=False),
+            nn.BatchNorm2d(384),
+            nn.ReLU(True),
+            # state size. (384) x 8 x 8
+            nn.ConvTranspose2d(384, 256, 5, 2, 0, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            # state size. (256) x 16 x 16
+            nn.ConvTranspose2d(256, 192, 5, 2, 0, bias=False),
+            nn.BatchNorm2d(192),
+            nn.ReLU(True),
+            # state size. (192) x 32 x 32
+            nn.ConvTranspose2d(192, 128, 5, 2, 0, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            # state size. (128) x 64 x 64
+            nn.ConvTranspose2d(128, 64, 5, 2, 0, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            # state size. (64) x 128 x 128
+            nn.ConvTranspose2d(64, self.nc, 8, 2, 0, bias=False),
+            nn.Tanh()
+            # state size. (nc) x 256 x 256
         )
 
     def forward(self, input):
-        return self.main(input)
+        output = self.main(input)
+        return output
