@@ -27,8 +27,10 @@ def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
     real = data[0].to(device)
     b_size = real.size(0)
     real_d = netD(real)
-
-    noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    if args.truncnorm:
+        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    else:
+        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
     fake = netG(noise).detach()
     fake_d = netD(fake)
 
@@ -52,7 +54,10 @@ def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
     ###########################
     netG.zero_grad()
 
-    noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    if args.truncnorm:
+        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    else:
+        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
     fake = netG(noise)
     fake_d = netD(fake).mean()
 
@@ -83,7 +88,10 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args):
 
     ## Train with all-fake batch
     # Generate batch of latent vectors
-    noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    if args.truncnorm:
+        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    else:
+        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
     fake = netG(noise)
     label.fill_(0)
     output = netD(fake.detach()).view(-1)

@@ -36,6 +36,7 @@ parser.add_argument("--gan_type", type=str, default="LogGAN")
 parser.add_argument("--gp_weight", type=float, default=10.)
 parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
+parser.add_argument("--truncnorm", type=bool, default=False)
 args = parser.parse_args()
 
 #manualSeed = random.randint(1, 10000) # use if you want new results
@@ -78,7 +79,10 @@ criterion = nn.BCELoss()
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
-fixed_noise = torch.from_numpy(truncated_z_sample(64, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+if args.truncnorm:
+    fixed_noise = torch.from_numpy(truncated_z_sample(64, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+else:
+    fixed_noise = torch.randn(64, args.nz, 1, 1, device=device)
 
 # Establish convention for real and fake labels during training
 real_label = 1
