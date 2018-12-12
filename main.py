@@ -121,7 +121,7 @@ for epoch in range(args.num_epochs):
         
         
         # Check how the generator is doing by saving G's output on fixed_noise
-        if (iters % 1 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+        if (iters % 100 == 0) or ((epoch == args.num_epochs-1) and (i == len(dataloader)-1)):
             fake = netG(fixed_noise)
             real = data[0].to(device)
             vis_fake = (fake + 1) / 2
