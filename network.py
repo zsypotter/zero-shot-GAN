@@ -5,7 +5,7 @@ import torch.nn as nn
 # Discriminator Code
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu, nc, nz, ndf, ngf):
+    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.nc = nc
@@ -49,13 +49,14 @@ class Discriminator(nn.Module):
 # Generator Code
         
 class Generator(nn.Module):
-    def __init__(self, ngpu, nc, nz, ndf, ngf):
+    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.nc = nc
         self.nz = nz
         self.ndf = ndf
         self.ngf = ngf
+        self.init_size = img_size // 8
         '''self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d( self.nz, self.ngf * 32, 4, 1, 0, bias=False),
@@ -86,7 +87,7 @@ class Generator(nn.Module):
             nn.Tanh()
             # state size. (nc) x 256 x 256
         )'''
-        self.main = nn.Sequential(
+        '''self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d(self.nz, 768, 1, 1, 0),
             # state size. (768) x 4 x 4
@@ -113,8 +114,49 @@ class Generator(nn.Module):
             nn.ConvTranspose2d(64, self.nc, 8, 2, 0, bias=False),
             nn.Tanh()
             # state size. (nc) x 256 x 256
+        )'''
+
+        self.linear = nn.Linear(self.nz, self.init_size * self.init_size * 64)
+        self.residual_block = nn.Sequential(
+            nn.Conv2d(64, 64, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(64, 64, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(64)
+        ) 
+        self.batch_norm = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(True)
+        self.conv_sq = nn.Sequential(
+            nn.Conv2d(64, 256, 3, 1, 1),
+            nn.PixelShuffle(2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(64, 256, 3, 1, 1),
+            nn.PixelShuffle(2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(64, 256, 3, 1, 1),
+            nn.PixelShuffle(2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(64, 3, 9, 1, 4),
+            nn.Tanh()
         )
 
+
     def forward(self, input):
-        output = self.main(input)
-        return output
+        x = input.view(-1, self.nz)
+        x = self.linear(x)
+        x = x.view(-1, 64, self.init_size, self.init_size)
+        c = x
+
+        for i in range(1, 17, 1):
+            o = self.residual_block(c)
+            c = o + c
+        
+        c = self.batch_norm(c)
+        c = self.relu(c)
+        x = c + x
+        x = self.conv_sq(x)
+
+        return x
