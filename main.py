@@ -62,7 +62,7 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
 device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
 
 # Create the generator
-netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf).to(device)
+netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netG = nn.DataParallel(netG, list(range(args.ngpu)))
 netG.apply(weights_init)
@@ -70,7 +70,7 @@ print(netG)
 
 
 # Create the Discriminator
-netD = Discriminator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf).to(device)
+netD = Discriminator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netD = nn.DataParallel(netD, list(range(args.ngpu)))
 netD.apply(weights_init)
