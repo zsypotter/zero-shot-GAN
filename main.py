@@ -21,6 +21,7 @@ from utils import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/Animals_with_Attributes2/JPEGImages")
+parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
@@ -38,6 +39,8 @@ parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
 args = parser.parse_args()
+
+model_name = os.path.join(args.log_dir, args.gan_type)
 
 #manualSeed = random.randint(1, 10000) # use if you want new results
 print("Random Seed: ", args.manualSeed)
@@ -101,7 +104,7 @@ G_losses = []
 D_losses = []
 iters = 0
 
-writer = SummaryWriter()
+writer = SummaryWriter(model_name)
 print("Starting Training Loop...")
 # For each epoch
 for epoch in range(args.num_epochs):
