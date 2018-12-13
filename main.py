@@ -32,6 +32,9 @@ parser.add_argument("--ndf", type=int, default=16)
 parser.add_argument("--ngf", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=0.0002)
+parser.add_argument("--decay_begin_step", type=int, default=100)
+parser.add_argument("--decay_step", type=int, default=5)
+parser.add_argument("--decay_gama", type=float, default=0.9)
 parser.add_argument("--beta1", type=float, default=0.5)
 parser.add_argument("--gan_type", type=str, default="LogGAN")
 parser.add_argument("--gp_weight", type=float, default=10.)
@@ -95,6 +98,11 @@ fake_label = 0
 optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 
+mt = [i for i in range(args.decay_begin_step, args.num_epochs, args.decay_step)]
+
+schedulerD = optim.lr_scheduler.MultiStepLR(optimizerD, milestones=mt, gamma=args.decay_gama)
+schedulerG = optim.lr_scheduler.MultiStepLR(optimizerG, milestones=mt, gamma=args.decay_gama)
+
 
 # Training Loop
 
@@ -109,6 +117,8 @@ print("Starting Training Loop...")
 # For each epoch
 for epoch in range(args.num_epochs):
     # For each batch in the dataloader
+    schedulerD.step()
+    schedulerG.step()
     for i, data in enumerate(dataloader, 0):
         
         if args.gan_type == "WGAN":
