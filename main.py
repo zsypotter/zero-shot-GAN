@@ -27,7 +27,7 @@ parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--show_num", type=int, default=64)
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=192)
+parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--image_size", type=int, default=256)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
@@ -198,7 +198,7 @@ for epoch in range(args.num_epochs):
         similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
         errD_real = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
         dis_real = dis
-        att_real = att_criterion(att, att_label)
+        att_real = att_criterion(similarity, att_label)
         errD_real.backward()
 
         predict = torch.argmax(similarity, 1)
