@@ -5,14 +5,50 @@ import torch.nn as nn
 # Discriminator Code
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size, num_class):
+    def __init__(self, args, att_size):
         super(Discriminator, self).__init__()
-        self.ngpu = ngpu
-        self.nc = nc
-        self.nz = nz
-        self.ndf = ndf
-        self.ngf = ngf
-        self.num_class = num_class
+        self.ngpu = args.ngpu
+        self.nc = args.nc
+        self.nz = args.nz
+        self.ndf = args.ndf
+        self.ngf = args.ngf
+        self.att_size = att_size
+        self.last_size = args.image_size // 32
+
+        '''self.lrelu = nn.LeakyReLU(0.2, inplace=True)
+        self.conv3_32 = nn.Conv2d(3, 32, 3, 2, 1, bias=False)
+        self.block32 = nn.Sequential(
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(32, 32, 3, 1, 1),
+        )
+        self.conv32_64 = nn.Conv2d(32, 64, 3, 2, 1, bias=False)
+        self.block64 = nn.Sequential(
+            nn.Conv2d(64, 64, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(64, 64, 3, 1, 1),
+        )
+        self.conv64_128 = nn.Conv2d(64, 128, 3, 2, 1, bias=False)
+        self.block128 = nn.Sequential(
+            nn.Conv2d(128, 128, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(128, 128, 3, 1, 1),
+        )
+        self.conv128_256 = nn.Conv2d(128, 256, 3, 2, 1, bias=False)
+        self.block256 = nn.Sequential(
+            nn.Conv2d(256, 256, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(256, 256, 3, 1, 1),
+        )
+        self.conv256_512 = nn.Conv2d(256, 512, 3, 2, 1, bias=False)
+        self.block512 = nn.Sequential(
+            nn.Conv2d(512, 512, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(512, 512, 3, 1, 1),
+        )
+
+        self.att_linear = nn.Linear(512 * self.last_size * self.last_size, self.att_size, bias=False)
+        self.dis_linear = nn.Linear(512 * self.last_size * self.last_size, 1)'''
         self.feature = nn.Sequential(
             # input is (nc) x 256 x 256
             nn.Conv2d(self.nc, self.ndf, 4, 2, 1, bias=False),
@@ -37,90 +73,74 @@ class Discriminator(nn.Module):
             nn.Conv2d(self.ndf * 16, self.ndf * 32, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.ndf * 32),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf*32) x 4 x 4
+            # state size. (ndf*8) x 4 x 4
+            #nn.Conv2d(self.ndf * 32, 1, 4, 1, 0, bias=False),
+            #nn.Sigmoid()
         )
 
-        self.aux_linear = nn.Linear(self.ndf * 32 * 4 * 4, self.num_class)
-        self.dis_linear = nn.Linear(self.ndf * 32 * 4 * 4, 1)
-        self.softmax = nn.Softmax()
+        self.att_linear = nn.Linear(32 * self.ndf * 4 * 4, self.att_size, bias=False)
+        self.dis_linear = nn.Linear(32 * self.ndf * 4 * 4, 1)
 
     def forward(self, input):
-        feature = self.feature(input)
-        feature = feature.view(-1, self.ndf * 32 * 4 * 4)
-        aux = self.aux_linear(feature)
+        '''# resblock part
+        # 3 X 256 X 256
+        c = self.conv3_32(input)
+        c = self.lrelu(c)
+        for i in range(1, 2, 1):
+            o = self.block32(c)
+            c = o + c
+            c = self.lrelu(c)
+        # 32 X 128 X 128
+        c = self.conv32_64(c)
+        c = self.lrelu(c)
+        for i in range(1, 4, 1):
+            o = self.block64(c)
+            c = o + c
+            c = self.lrelu(c)
+        # 64 X 64 X 64
+        c = self.conv64_128(c)
+        c = self.lrelu(c)
+        for i in range(1, 4, 1):
+            o = self.block128(c)
+            c = o + c
+            c = self.lrelu(c)
+        # 128 X 32 X32
+        c = self.conv128_256(c)
+        c = self.lrelu(c)
+        for i in range(1, 4, 1):
+            o = self.block256(c)
+            c = o + c
+            c = self.lrelu(c)
+        # 256 X 16 X 16
+        c = self.conv256_512(c)
+        c = self.lrelu(c)
+        for i in range(1, 4, 1):
+            o = self.block512(c)
+            c = o + c
+            c = self.lrelu(c)
+        # 512 X 8 X 8
+
+        # mapping
+        feature = c.view(-1, 512 * self.last_size * self.last_size)
+        att = self.att_linear(feature)
+        dis = self.dis_linear(feature)'''
+        feature = self.feature(input).view(-1, 32 * self.ndf * 4 * 4)
+        att = self.att_linear(feature)
         dis = self.dis_linear(feature)
-        return self.softmax(aux), dis
+        return att, dis
 
 #########################################################################
 # Generator Code
         
 class Generator(nn.Module):
-    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size, num_class):
+    def __init__(self, args, att_size):
         super(Generator, self).__init__()
-        self.ngpu = ngpu
-        self.nc = nc
-        self.nz = nz + num_class
-        self.ndf = ndf
-        self.ngf = ngf
-        self.init_size = img_size // 8
-        '''self.main = nn.Sequential(
-            # input is Z, going into a convolution
-            nn.ConvTranspose2d( self.nz, self.ngf * 32, 4, 1, 0, bias=False),
-            nn.BatchNorm2d(self.ngf * 32),
-            nn.ReLU(True),
-            # state size. (ngf*32) x 4 x 4
-            nn.ConvTranspose2d(self.ngf * 32, self.ngf * 16, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(self.ngf * 16),
-            nn.ReLU(True),
-            # state size. (ngf*16) x 8 x 8
-            nn.ConvTranspose2d( self.ngf * 16, self.ngf * 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 8),
-            nn.ReLU(True),
-            # state size. (ngf*8) x 16 x 16
-            nn.ConvTranspose2d( self.ngf * 8, self.ngf * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 4),
-            nn.ReLU(True),
-            # state size. (ngf*4) x 32 x 32
-            nn.ConvTranspose2d( self.ngf * 4, self.ngf * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 2),
-            nn.ReLU(True),
-            # state size. (ngf*2) x 64 x 64
-            nn.ConvTranspose2d( self.ngf * 2, self.ngf, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
-            # state size. (ngf) x 128 x 128
-            nn.ConvTranspose2d( self.ngf, self.nc, 4, 2, 1, bias=False),
-            nn.Tanh()
-            # state size. (nc) x 256 x 256
-        )'''
-        '''self.main = nn.Sequential(
-            # input is Z, going into a convolution
-            nn.ConvTranspose2d(self.nz, 768, 1, 1, 0),
-            # state size. (768) x 4 x 4
-            nn.ConvTranspose2d(768, 384, 5, 2, 0, bias=False),
-            nn.BatchNorm2d(384),
-            nn.ReLU(True),
-            # state size. (384) x 8 x 8
-            nn.ConvTranspose2d(384, 256, 5, 2, 0, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(True),
-            # state size. (256) x 16 x 16
-            nn.ConvTranspose2d(256, 192, 5, 2, 0, bias=False),
-            nn.BatchNorm2d(192),
-            nn.ReLU(True),
-            # state size. (192) x 32 x 32
-            nn.ConvTranspose2d(192, 128, 5, 2, 0, bias=False),
-            nn.BatchNorm2d(128),
-            nn.ReLU(True),
-            # state size. (128) x 64 x 64
-            nn.ConvTranspose2d(128, 64, 5, 2, 0, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(True),
-            # state size. (64) x 128 x 128
-            nn.ConvTranspose2d(64, self.nc, 8, 2, 0, bias=False),
-            nn.Tanh()
-            # state size. (nc) x 256 x 256
-        )'''
+        self.ngpu = args.ngpu
+        self.nc = args.nc
+        self.nz = args.nz + att_size
+        self.ndf = args.ndf
+        self.ngf = args.ngf
+        self.init_size = args.image_size // 8
 
         self.linear = nn.Linear(self.nz, self.init_size * self.init_size * 64)
         self.residual_block = nn.Sequential(
@@ -154,15 +174,17 @@ class Generator(nn.Module):
         x = input.view(-1, self.nz)
         x = self.linear(x)
         x = x.view(-1, 64, self.init_size, self.init_size)
+        
+        # resblock part
         c = x
-
         for i in range(1, 17, 1):
             o = self.residual_block(c)
             c = o + c
-        
         c = self.batch_norm(c)
         c = self.relu(c)
         x = c + x
+
+        # upsample part
         x = self.conv_sq(x)
 
         return x

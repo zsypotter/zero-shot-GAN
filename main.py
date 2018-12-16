@@ -12,21 +12,23 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from IPython.display import HTML
 from network import Generator, Discriminator
 from tensorboardX import SummaryWriter
 from utils import *
+from data_loader import customData
 
+############################
+    # set parameter
+############################
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/Animals_with_Attributes2/JPEGImages")
+parser.add_argument("--dataset", type=str, default="/data2/zhousiyu/dataset/CUB_200_2011/zeroshot")
+parser.add_argument("--image_dir", type=str, default="/data2/zhousiyu/dataset/CUB_200_2011/images")
 parser.add_argument("--log_dir", type=str, default="runs")
+parser.add_argument("--show_num", type=int, default=64)
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=192)
 parser.add_argument("--image_size", type=int, default=256)
-parser.add_argument("--num_class", type=int, default=50)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
 parser.add_argument("--ndf", type=int, default=16)
@@ -42,78 +44,133 @@ parser.add_argument("--gp_weight", type=float, default=10.)
 parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
+parser.add_argument("--gan_weight", type=float, default=1)
 args = parser.parse_args()
 
-model_name = os.path.join(args.log_dir, args.gan_type)
+############################
+    # init model_name
+############################
+model_name = os.path.join(args.log_dir, args.gan_type + '_test3')
 
-#manualSeed = random.randint(1, 10000) # use if you want new results
+############################
+    # set random_seed
+############################
 print("Random Seed: ", args.manualSeed)
 random.seed(args.manualSeed)
 torch.manual_seed(args.manualSeed)
 
-dataset = dset.ImageFolder(root=args.dataroot,
-                           transform=transforms.Compose([
-                               transforms.Resize(args.image_size),
-                               transforms.CenterCrop(args.image_size),
-                               transforms.ToTensor(),
-                               transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-                           ]))
-# Create the dataloader
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
-                                         shuffle=True, num_workers=args.workers)
-
-# Decide which device we want to run on
+############################
+    # set GPU option
+############################
 device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
 
+############################
+    # init file_path
+############################
+att_path = os.path.join(args.dataset, 'class_attribute_labels_continuous.txt')
+train_img_path = os.path.join(args.dataset, 'train.txt')
+train_cls_path = os.path.join(args.dataset, 'train_classes.txt')
+testR_img_path = os.path.join(args.dataset, 'testRecg.txt')
+testZ_img_path = os.path.join(args.dataset, 'testZS.txt')
+test_cls_path = os.path.join(args.dataset, 'test_classes.txt')
+
+############################
+    # init attributes
+############################
+# load data
+train_cls_file = open(train_cls_path)
+test_cls_file = open(test_cls_path)
+lines = train_cls_file.readlines()
+train_cls_dict = [(int(line.split(' ')[0]) - 1) for line in lines]
+lines = test_cls_file.readlines()
+test_cls_dict = [(int(line.split(' ')[0]) - 1) for line in lines]
+att_dict = np.loadtxt(att_path)
+train_class_num = len(train_cls_dict)
+test_class_num = len(test_cls_dict)
+num_class, att_size = att_dict.shape
+
+# modify att value
+if att_dict.max() > 1.:
+    att_dict /= 100.
+att_mean = att_dict[train_cls_dict, :].mean(axis=0)
+for i in range(att_size):
+    att_dict[att_dict[:, i] < 0, i] = att_mean[i]
+for i in range(att_size):
+    att_dict[:, i] = att_dict[:, i] - att_mean[i] + 0.5
+train_att_dict = att_dict[train_cls_dict, :]
+test_att_dict = att_dict[test_cls_dict, :]
+
+############################
+    # set dataLoader
+############################
+# set transform
+data_transforms = transforms.Compose([
+                    transforms.Resize(args.image_size),
+                    transforms.CenterCrop(args.image_size),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                ])  
+
+# set data_loader
+trainset = customData(args.image_dir, train_img_path, train_cls_path, train_class_num, data_transforms)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+testRset = customData(args.image_dir, testR_img_path, train_cls_path, train_class_num, data_transforms)
+testRloader = torch.utils.data.DataLoader(testRset, batch_size=1, shuffle=True, num_workers=2)
+testZset = customData(args.image_dir, testZ_img_path, test_cls_path, test_class_num, data_transforms)
+testZloader = torch.utils.data.DataLoader(testZset, batch_size=1, shuffle=True, num_workers=2)
+
+############################
+    # init network
+############################
 # Create the generator
-netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size, args.num_class).to(device)
+netG = Generator(args, att_size).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netG = nn.DataParallel(netG, list(range(args.ngpu)))
 netG.apply(weights_init)
 print(netG)
 
-
 # Create the Discriminator
-netD = Discriminator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size, args.num_class).to(device)
+netD = Discriminator(args, att_size).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netD = nn.DataParallel(netD, list(range(args.ngpu)))
 netD.apply(weights_init)
 print(netD)
 
-
-# Initialize BCELoss function
-criterion = nn.BCELoss()
-
-# Create batch of latent vectors that we will use to visualize
-#  the progression of the generator
-if args.truncnorm:
-    fixed_noise = truncated_z_sample(args.num_class, args.nz + args.num_class, args.tc_th, args.manualSeed)
+############################
+    # set loss
+############################
+if args.gan_type == "LogGAN":
+    dis_criterion = nn.BCELoss()
 else:
-    fixed_noise = np.random.normal(0, 1, (args.num_class, args.nz + args.num_class))
-fixed_aux = np.arange(args.num_class)
-fixed_onehot = np.zeros((args.num_class, args.num_class))
-fixed_onehot[np.arange(args.num_class), fixed_aux] = 1
-fixed_noise[np.arange(args.num_class), :args.num_class] = fixed_onehot[np.arange(args.num_class)]
+    dis_criterion = nn.MSELoss()
+att_criterion = nn.CrossEntropyLoss()
+dis_criterion = dis_criterion.to(device)
+att_criterion = att_criterion.to(device)
+
+############################
+    # set fixed noise for test
+############################
+if args.truncnorm:
+    fixed_noise = truncated_z_sample(num_class, args.nz + att_size, args.tc_th, args.manualSeed)
+else:
+    fixed_noise = np.random.normal(0, 1, (num_class, args.nz + att_size))
+fixed_noise[np.arange(num_class), :att_size] = att_dict[np.arange(num_class)]
 fixed_noise = torch.from_numpy(fixed_noise).float().to(device)
 
-# Setup Adam optimizers for both G and D
+
+############################
+    # set optimzer
+############################
 optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
-
 mt = [i for i in range(args.decay_begin_step, args.num_epochs, args.decay_step)]
-
 schedulerD = optim.lr_scheduler.MultiStepLR(optimizerD, milestones=mt, gamma=args.decay_gama)
 schedulerG = optim.lr_scheduler.MultiStepLR(optimizerG, milestones=mt, gamma=args.decay_gama)
 
-
-# Training Loop
-
-# Lists to keep track of progress
-img_list = []
-G_losses = []
-D_losses = []
+############################
+    # train_loop
+############################
 iters = 0
-
 writer = SummaryWriter(model_name)
 print("Starting Training Loop...")
 # For each epoch
@@ -121,33 +178,137 @@ for epoch in range(args.num_epochs):
     # For each batch in the dataloader
     schedulerD.step()
     schedulerG.step()
-    for i, data in enumerate(dataloader, 0):
-        
-        if args.gan_type == "WGAN":
-            loss_d, loss_g = wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args)
-        elif args.gan_type == "LogGAN" or args.gan_type == "MseGAN":
-            loss_d, loss_g, dis_real, dis_fake, aux_real, aux_fake = gan(data, netD, netG, optimizerD, optimizerG, device, args)
+    train_ac = 0
+    for i, data in enumerate(trainloader, 0):
+        ############################
+        # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+        ###########################
+        ## Train with all-real batch
+        netD.zero_grad()
+        real, att_train_label, att_label = data
+        real =real.to(device)
+        att_label = att_label.to(device)
+        b_size = real.size(0)
+        dis_label = torch.full((b_size,), 1, device=device)
+
+        att, dis = netD(real)
+        dis = dis.view(-1)
+        if args.gan_type == "LogGAN":
+            dis = F.sigmoid(dis)
+        similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
+        errD_real = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
+        dis_real = dis
+        att_real = att_criterion(att, att_label)
+        errD_real.backward()
+
+        predict = torch.argmax(similarity, 1)
+        train_ac += (predict == att_label).sum().item()
+
+        ## Train with all-fake batch
+        # Generate batch of latent vectors
+        # prepare latent vectors
+        if args.truncnorm:
+            noise = truncated_z_sample(b_size, args.nz + att_size, args.tc_th, args.manualSeed)
+        else:
+            noise = np.random.normal(0, 1, (b_size, args.nz + att_size))    
+        att_label = np.random.randint(0, num_class, b_size)
+        att = att_dict[att_label, :]
+        noise[np.arange(b_size), :att_size] = att[np.arange(b_size)]
+        noise = torch.from_numpy(noise).float().to(device)
+        att_label = torch.from_numpy(att_label).to(device)
+        # feed in network
+        fake = netG(noise)
+        dis_label.fill_(0)
+        att, dis = netD(fake.detach())
+        dis = dis.view(-1)
+        if args.gan_type == "LogGAN":
+            dis = F.sigmoid(dis)
+        similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
+        errD_fake = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
+        errD_fake.backward()
+
+        loss_d = (errD_real + errD_fake) / 2
+        optimizerD.step()
+
+        ############################
+        # (2) Update G network: maximize log(D(G(z)))
+        ###########################
+        netG.zero_grad()
+        dis_label.fill_(1)
+        att, dis = netD(fake) 
+        dis = dis.view(-1)
+        if args.gan_type == "LogGAN":
+            dis = F.sigmoid(dis)
+        similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
+        errG = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
+        dis_fake = dis
+        att_fake = att_criterion(similarity, att_label)
+        errG.backward()
+        loss_g = errG
+        optimizerG.step()
         
         # Output training stats
         if i % 1 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tDIS: %.4f(%.4f)\tAUX: %.4f(%.4f)'
-                  % (epoch, args.num_epochs, i, len(dataloader),
-                     loss_d.item(), loss_g.item(), dis_real.mean().item(), dis_fake.mean().item(), aux_real.mean().item(), aux_fake.mean().item()))
-        
-        
-        # Check how the generator is doing by saving G's output on fixed_noise
-        if (iters % 100 == 0) or ((epoch == args.num_epochs-1) and (i == len(dataloader)-1)):
-            fake = netG(fixed_noise)
-            vis_fake = (fake + 1) / 2
-            writer.add_image("fake", vis_fake, iters)
-            writer.add_scalar("loss_d", loss_d, iters)
-            writer.add_scalar("loss_g", loss_g, iters)
-            writer.add_scalar("dis_real", dis_real.mean(), iters)
-            writer.add_scalar("dis_fake", dis_fake.mean(), iters)
-            writer.add_scalar("aux_real", aux_real.mean(), iters)
-            writer.add_scalar("aux_fake", aux_fake.mean(), iters)
-            
-        iters += 1
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tDIS: %.4f(%.4f)\tATT: %.4f(%.4f)'
+                  % (epoch, args.num_epochs, i, len(trainloader),
+                     loss_d.item(), loss_g.item(), dis_real.mean().item(), dis_fake.mean().item(), att_real.mean().item(), att_fake.mean().item()))
+    train_ac = train_ac / len(trainloader.dataset)
+
+    ############################
+        # testR_loop
+    ############################
+    testR_ac = 0
+    for i, data in enumerate(testRloader, 0):
+        netD.zero_grad()
+        real, att_testR_label, att_label = data
+        real =real.to(device)
+        att_testR_label = att_testR_label.to(device)
+        b_size = real.size(0)
+
+        att, dis = netD(real)
+        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
+
+        predict = torch.argmax(similarity, 1)
+        testR_ac += (predict == att_testR_label).sum().item()
+    testR_ac = testR_ac / len(testRloader.dataset)
+
+    ############################
+        # testZ_loop
+    ############################
+    testZ_ac = 0
+    for i, data in enumerate(testZloader, 0):
+        netD.zero_grad()
+        real, att_testZ_label, att_label = data
+        real =real.to(device)
+        att_testZ_label = att_testZ_label.to(device)
+        b_size = real.size(0)
+
+        att, dis = netD(real)
+        similarity = torch.mm(att, torch.from_numpy(test_att_dict).float().to(device).t())
+
+        predict = torch.argmax(similarity, 1)
+        testZ_ac += (predict == att_testZ_label).sum().item()
+    testZ_ac = testZ_ac / len(testZloader.dataset)
+
+    print('[%d/%d]\ttrain_ac: %.4f\ttestR_ac: %.4f\ttestZ_ac: %.4f'
+                  % (epoch, args.num_epochs,
+                     train_ac, testR_ac, testZ_ac))
+
+    ############################
+        # tensorboard summary
+    ############################      
+    fake = netG(fixed_noise[:args.show_num])
+    vis_fake = (fake + 1) / 2
+    writer.add_image("fake", vis_fake, epoch)
+    writer.add_scalar("loss_d", loss_d, epoch)
+    writer.add_scalar("loss_g", loss_g, epoch)
+    writer.add_scalar("dis_real", dis_real.mean(), epoch)
+    writer.add_scalar("dis_fake", dis_fake.mean(), epoch)
+    writer.add_scalar("att_real", att_real.mean(), epoch)
+    writer.add_scalar("att_fake", att_fake.mean(), epoch)
+    writer.add_scalar("train_ac", train_ac, epoch)
+    writer.add_scalar("testR_ac", testR_ac, epoch)
+    writer.add_scalar("testZ_ac", testZ_ac, epoch)
 
 writer.close()
 
