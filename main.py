@@ -26,13 +26,14 @@ parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--image_size", type=int, default=256)
+parser.add_argument("--num_class", type=int, default=50)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
 parser.add_argument("--ndf", type=int, default=16)
 parser.add_argument("--ngf", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=0.0002)
-parser.add_argument("--decay_begin_step", type=int, default=100)
+parser.add_argument("--decay_begin_step", type=int, default=50)
 parser.add_argument("--decay_step", type=int, default=5)
 parser.add_argument("--decay_gama", type=float, default=0.9)
 parser.add_argument("--beta1", type=float, default=0.5)
@@ -65,7 +66,7 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
 device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
 
 # Create the generator
-netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size).to(device)
+netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size, args.num_class).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netG = nn.DataParallel(netG, list(range(args.ngpu)))
 netG.apply(weights_init)
@@ -73,7 +74,7 @@ print(netG)
 
 
 # Create the Discriminator
-netD = Discriminator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size).to(device)
+netD = Discriminator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size, args.num_class).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netD = nn.DataParallel(netD, list(range(args.ngpu)))
 netD.apply(weights_init)
@@ -86,13 +87,14 @@ criterion = nn.BCELoss()
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
 if args.truncnorm:
-    fixed_noise = torch.from_numpy(truncated_z_sample(64, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    fixed_noise = truncated_z_sample(args.num_class, args.nz + args.num_class, args.tc_th, args.manualSeed)
 else:
-    fixed_noise = torch.randn(64, args.nz, 1, 1, device=device)
-
-# Establish convention for real and fake labels during training
-real_label = 1
-fake_label = 0
+    fixed_noise = np.random.normal(0, 1, (args.num_class, args.nz + args.num_class))
+fixed_aux = np.arange(args.num_class)
+fixed_onehot = np.zeros((args.num_class, args.num_class))
+fixed_onehot[np.arange(args.num_class), fixed_aux] = 1
+fixed_noise[np.arange(args.num_class), :args.num_class] = fixed_onehot[np.arange(args.num_class)]
+fixed_noise = torch.from_numpy(fixed_noise).float().to(device)
 
 # Setup Adam optimizers for both G and D
 optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
@@ -124,23 +126,26 @@ for epoch in range(args.num_epochs):
         if args.gan_type == "WGAN":
             loss_d, loss_g = wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args)
         elif args.gan_type == "LogGAN" or args.gan_type == "MseGAN":
-            loss_d, loss_g = gan(data, netD, netG, optimizerD, optimizerG, device, args)
+            loss_d, loss_g, dis_real, dis_fake, aux_real, aux_fake = gan(data, netD, netG, optimizerD, optimizerG, device, args)
         
         # Output training stats
         if i % 1 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\t'
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tDIS: %.4f(%.4f)\tAUX: %.4f(%.4f)'
                   % (epoch, args.num_epochs, i, len(dataloader),
-                     loss_d.item(), loss_g.item()))
+                     loss_d.item(), loss_g.item(), dis_real.mean().item(), dis_fake.mean().item(), aux_real.mean().item(), aux_fake.mean().item()))
         
         
         # Check how the generator is doing by saving G's output on fixed_noise
         if (iters % 100 == 0) or ((epoch == args.num_epochs-1) and (i == len(dataloader)-1)):
             fake = netG(fixed_noise)
-            real = data[0].to(device)
             vis_fake = (fake + 1) / 2
-            vis_real = (real + 1) / 2
             writer.add_image("fake", vis_fake, iters)
-            writer.add_image("real", vis_real[0:64], iters)
+            writer.add_scalar("loss_d", loss_d, iters)
+            writer.add_scalar("loss_g", loss_g, iters)
+            writer.add_scalar("dis_real", dis_real.mean(), iters)
+            writer.add_scalar("dis_fake", dis_fake.mean(), iters)
+            writer.add_scalar("aux_real", aux_real.mean(), iters)
+            writer.add_scalar("aux_fake", aux_fake.mean(), iters)
             
         iters += 1
 

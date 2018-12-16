@@ -5,14 +5,15 @@ import torch.nn as nn
 # Discriminator Code
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size):
+    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size, num_class):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.nc = nc
         self.nz = nz
         self.ndf = ndf
         self.ngf = ngf
-        self.main = nn.Sequential(
+        self.num_class = num_class
+        self.feature = nn.Sequential(
             # input is (nc) x 256 x 256
             nn.Conv2d(self.nc, self.ndf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
@@ -36,24 +37,29 @@ class Discriminator(nn.Module):
             nn.Conv2d(self.ndf * 16, self.ndf * 32, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.ndf * 32),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(self.ndf * 32, 1, 4, 1, 0, bias=False),
-            #nn.Sigmoid()
+            # state size. (ndf*32) x 4 x 4
         )
 
+        self.aux_linear = nn.Linear(self.ndf * 32 * 4 * 4, self.num_class)
+        self.dis_linear = nn.Linear(self.ndf * 32 * 4 * 4, 1)
+        self.softmax = nn.Softmax()
+
     def forward(self, input):
-        output = self.main(input)
-        return output
+        feature = self.feature(input)
+        feature = feature.view(-1, self.ndf * 32 * 4 * 4)
+        aux = self.aux_linear(feature)
+        dis = self.dis_linear(feature)
+        return self.softmax(aux), dis
 
 #########################################################################
 # Generator Code
         
 class Generator(nn.Module):
-    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size):
+    def __init__(self, ngpu, nc, nz, ndf, ngf, img_size, num_class):
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.nc = nc
-        self.nz = nz
+        self.nz = nz + num_class
         self.ndf = ndf
         self.ngf = ngf
         self.init_size = img_size // 8

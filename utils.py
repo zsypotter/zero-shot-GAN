@@ -69,35 +69,51 @@ def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
 
 def gan(data, netD, netG, optimizerD, optimizerG, device, args):
     if args.gan_type == "LogGAN":
-        criterion = nn.BCELoss()
+        dis_criterion = nn.BCELoss()
     else:
-        criterion = nn.MSELoss()
+        dis_criterion = nn.MSELoss()
+    aux_criterion = nn.NLLLoss()
+    dis_criterion = dis_criterion.to(device)
+    aux_criterion = aux_criterion.to(device)
     ############################
     # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
     ###########################
     ## Train with all-real batch
     netD.zero_grad()
-    real = data[0].to(device)
+    real, aux_label = data
+    real =real.to(device)
     b_size = real.size(0)
-    label = torch.full((b_size,), 1, device=device)
-    output = netD(real).view(-1)
+    dis_label = torch.full((b_size,), 1, device=device)
+    aux_onehot = np.zeros((b_size, args.num_class))
+    aux_onehot[np.arange(b_size), aux_label] = 1
+
+    aux, dis = netD(real)
+    dis = dis.view(-1)
     if args.gan_type == "LogGAN":
-        output = F.sigmoid(output)
-    errD_real = criterion(output, label)
+        dis = F.sigmoid(dis)
+    errD_real = dis_criterion(dis, dis_label) + aux_criterion(aux, aux_label.to(device))
+    dis_real = dis
+    aux_real = aux_criterion(aux, aux_label.to(device))
     errD_real.backward()
 
     ## Train with all-fake batch
     # Generate batch of latent vectors
     if args.truncnorm:
-        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+        noise = truncated_z_sample(b_size, args.nz + args.num_class, args.tc_th, args.manualSeed)
     else:
-        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
+        noise = np.random.normal(0, 1, (b_size, args.nz + args.num_class))
+    noise[np.arange(b_size), :args.num_class] = aux_onehot[np.arange(b_size)]
+    noise = torch.from_numpy(noise).float().to(device)
+
     fake = netG(noise)
-    label.fill_(0)
-    output = netD(fake.detach()).view(-1)
+    dis_label.fill_(0)
+    aux, dis = netD(fake.detach())
+    dis = dis.view(-1)
     if args.gan_type == "LogGAN":
-        output = F.sigmoid(output)
-    errD_fake = criterion(output, label)
+        dis = F.sigmoid(dis)
+    errD_fake = dis_criterion(dis, dis_label) + aux_criterion(aux, aux_label.to(device))
+    dis_fake = dis
+    aux_fake = aux_criterion(aux, aux_label.to(device))
     errD_fake.backward()
     loss_d = errD_real + errD_fake
     optimizerD.step()
@@ -106,13 +122,14 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args):
     # (2) Update G network: maximize log(D(G(z)))
     ###########################
     netG.zero_grad()
-    label.fill_(1)
-    output = netD(fake).view(-1)
+    dis_label.fill_(1)
+    aux, dis = netD(fake) 
+    dis = dis.view(-1)
     if args.gan_type == "LogGAN":
-        output = F.sigmoid(output)
-    errG = criterion(output, label)
+        dis = F.sigmoid(dis)
+    errG = dis_criterion(dis, dis_label) + aux_criterion(aux, aux_label.to(device))
     errG.backward()
     loss_g = errG
     optimizerG.step()
     
-    return loss_d, loss_g
+    return loss_d, loss_g, dis_real, dis_fake, aux_real, aux_fake
