@@ -29,13 +29,13 @@ class customData(torch.utils.data.Dataset):
         img_name = self.img_name[item]
         img = self.loader(img_name)
         att_label = self.label[item]
-        att_phase_label = -1
+        phase_att_label = -1
         for i in range(self.class_num):
             if self.cls_dict[i] == att_label:
-                att_phase_label = i
+                phase_att_label = i
                 break
 
         if self.data_transforms is not None:
             img = self.data_transforms(img)
 
-        return img, att_phase_label, att_label
+        return img, phase_att_label, att_label

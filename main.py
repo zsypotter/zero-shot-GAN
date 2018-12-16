@@ -27,7 +27,7 @@ parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--show_num", type=int, default=64)
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=192)
 parser.add_argument("--image_size", type=int, default=256)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
@@ -185,9 +185,10 @@ for epoch in range(args.num_epochs):
         ###########################
         ## Train with all-real batch
         netD.zero_grad()
-        real, att_train_label, att_label = data
+        real, train_att_label, att_label = data
         real =real.to(device)
         att_label = att_label.to(device)
+        train_att_label = train_att_label.to(device)
         b_size = real.size(0)
         dis_label = torch.full((b_size,), 1, device=device)
 
@@ -195,14 +196,14 @@ for epoch in range(args.num_epochs):
         dis = dis.view(-1)
         if args.gan_type == "LogGAN":
             dis = F.sigmoid(dis)
-        similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
-        errD_real = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
+        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
+        errD_real = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label)
         dis_real = dis
-        att_real = att_criterion(similarity, att_label)
+        att_real = att_criterion(similarity, train_att_label)
         errD_real.backward()
 
         predict = torch.argmax(similarity, 1)
-        train_ac += (predict == att_label).sum().item()
+        train_ac += (predict == train_att_label).sum().item()
 
         ## Train with all-fake batch
         # Generate batch of latent vectors
@@ -210,12 +211,10 @@ for epoch in range(args.num_epochs):
         if args.truncnorm:
             noise = truncated_z_sample(b_size, args.nz + att_size, args.tc_th, args.manualSeed)
         else:
-            noise = np.random.normal(0, 1, (b_size, args.nz + att_size))    
-        att_label = np.random.randint(0, num_class, b_size)
-        att = att_dict[att_label, :]
-        noise[np.arange(b_size), :att_size] = att[np.arange(b_size)]
+            noise = np.random.normal(0, 1, (b_size, args.nz + att_size)) 
+        att_d = att.detach()   
+        noise[np.arange(b_size), :att_size] = att_d[np.arange(b_size)]
         noise = torch.from_numpy(noise).float().to(device)
-        att_label = torch.from_numpy(att_label).to(device)
         # feed in network
         fake = netG(noise)
         dis_label.fill_(0)
@@ -223,8 +222,8 @@ for epoch in range(args.num_epochs):
         dis = dis.view(-1)
         if args.gan_type == "LogGAN":
             dis = F.sigmoid(dis)
-        similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
-        errD_fake = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
+        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
+        errD_fake = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label)
         errD_fake.backward()
 
         loss_d = (errD_real + errD_fake) / 2
@@ -239,10 +238,10 @@ for epoch in range(args.num_epochs):
         dis = dis.view(-1)
         if args.gan_type == "LogGAN":
             dis = F.sigmoid(dis)
-        similarity = torch.mm(att, torch.from_numpy(att_dict).float().to(device).t())
-        errG = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, att_label)
+        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
+        errG = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label)
         dis_fake = dis
-        att_fake = att_criterion(similarity, att_label)
+        att_fake = att_criterion(similarity, train_att_label)
         errG.backward()
         loss_g = errG
         optimizerG.step()
@@ -260,16 +259,16 @@ for epoch in range(args.num_epochs):
     testR_ac = 0
     for i, data in enumerate(testRloader, 0):
         netD.zero_grad()
-        real, att_testR_label, att_label = data
+        real, testR_att_label, att_label = data
         real =real.to(device)
-        att_testR_label = att_testR_label.to(device)
+        testR_att_label = testR_att_label.to(device)
         b_size = real.size(0)
 
         att, dis = netD(real)
         similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
 
         predict = torch.argmax(similarity, 1)
-        testR_ac += (predict == att_testR_label).sum().item()
+        testR_ac += (predict == testR_att_label).sum().item()
     testR_ac = testR_ac / len(testRloader.dataset)
 
     ############################
@@ -278,16 +277,16 @@ for epoch in range(args.num_epochs):
     testZ_ac = 0
     for i, data in enumerate(testZloader, 0):
         netD.zero_grad()
-        real, att_testZ_label, att_label = data
+        real, testZ_att_label, att_label = data
         real =real.to(device)
-        att_testZ_label = att_testZ_label.to(device)
+        testZ_att_label = testZ_att_label.to(device)
         b_size = real.size(0)
 
         att, dis = netD(real)
         similarity = torch.mm(att, torch.from_numpy(test_att_dict).float().to(device).t())
 
         predict = torch.argmax(similarity, 1)
-        testZ_ac += (predict == att_testZ_label).sum().item()
+        testZ_ac += (predict == testZ_att_label).sum().item()
     testZ_ac = testZ_ac / len(testZloader.dataset)
 
     print('[%d/%d]\ttrain_ac: %.4f\ttestR_ac: %.4f\ttestZ_ac: %.4f'
