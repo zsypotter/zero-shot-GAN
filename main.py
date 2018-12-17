@@ -45,12 +45,13 @@ parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
 parser.add_argument("--gan_weight", type=float, default=1)
+parser.add_argument("--L2_weight", type=float, default=100)
 args = parser.parse_args()
 
 ############################
     # init model_name
 ############################
-model_name = os.path.join(args.log_dir, args.gan_type + '_test3')
+model_name = os.path.join(args.log_dir, args.gan_type + '_test4')
 
 ############################
     # set random_seed
@@ -144,8 +145,10 @@ if args.gan_type == "LogGAN":
 else:
     dis_criterion = nn.MSELoss()
 att_criterion = nn.CrossEntropyLoss()
+mse_criterion = nn.MSELoss()
 dis_criterion = dis_criterion.to(device)
 att_criterion = att_criterion.to(device)
+mse_criterion = mse_criterion.to(device)
 
 ############################
     # set fixed noise for test
@@ -239,18 +242,36 @@ for epoch in range(args.num_epochs):
         if args.gan_type == "LogGAN":
             dis = F.sigmoid(dis)
         similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
-        errG = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label)
+        errG = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label) + args.L2_weight * mse_criterion(fake, real)
         dis_fake = dis
         att_fake = att_criterion(similarity, train_att_label)
         errG.backward()
         loss_g = errG
         optimizerG.step()
         
-        # Output training stats
-        if i % 1 == 0:
+        ############################
+            # print loss
+        ############################ 
+        if iters % 1 == 0:
             print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tDIS: %.4f(%.4f)\tATT: %.4f(%.4f)'
                   % (epoch, args.num_epochs, i, len(trainloader),
                      loss_d.item(), loss_g.item(), dis_real.mean().item(), dis_fake.mean().item(), att_real.mean().item(), att_fake.mean().item()))
+
+        ############################
+            # tensorboard summary
+        ############################    
+        if iters % 10 == 0:  
+            vis_fake = (fake + 1) / 2
+            vis_real = (real + 1) / 2
+            writer.add_image("fake", vis_fake, iters)
+            writer.add_image("real", vis_real, iters)
+            writer.add_scalar("loss_d", loss_d, iters)
+            writer.add_scalar("loss_g", loss_g, iters)
+            writer.add_scalar("dis_real", dis_real.mean(), iters)
+            writer.add_scalar("dis_fake", dis_fake.mean(), iters)
+            writer.add_scalar("att_real", att_real.mean(), iters)
+            writer.add_scalar("att_fake", att_fake.mean(), iters)
+        iters += 1
     train_ac = train_ac / len(trainloader.dataset)
 
     ############################
@@ -292,22 +313,9 @@ for epoch in range(args.num_epochs):
     print('[%d/%d]\ttrain_ac: %.4f\ttestR_ac: %.4f\ttestZ_ac: %.4f'
                   % (epoch, args.num_epochs,
                      train_ac, testR_ac, testZ_ac))
-
-    ############################
-        # tensorboard summary
-    ############################      
-    fake = netG(fixed_noise[:args.show_num])
-    vis_fake = (fake + 1) / 2
-    writer.add_image("fake", vis_fake, epoch)
-    writer.add_scalar("loss_d", loss_d, epoch)
-    writer.add_scalar("loss_g", loss_g, epoch)
-    writer.add_scalar("dis_real", dis_real.mean(), epoch)
-    writer.add_scalar("dis_fake", dis_fake.mean(), epoch)
-    writer.add_scalar("att_real", att_real.mean(), epoch)
-    writer.add_scalar("att_fake", att_fake.mean(), epoch)
     writer.add_scalar("train_ac", train_ac, epoch)
     writer.add_scalar("testR_ac", testR_ac, epoch)
     writer.add_scalar("testZ_ac", testZ_ac, epoch)
-
+    
 writer.close()
 
