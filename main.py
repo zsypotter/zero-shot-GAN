@@ -12,6 +12,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import numpy as np
+import time
 from network import Generator, Discriminator
 from tensorboardX import SummaryWriter
 from utils import *
@@ -27,8 +28,8 @@ parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--show_num", type=int, default=64)
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=192)
-parser.add_argument("--image_size", type=int, default=256)
+parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--image_size", type=int, default=224)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
 parser.add_argument("--ndf", type=int, default=16)
@@ -51,7 +52,7 @@ args = parser.parse_args()
 ############################
     # init model_name
 ############################
-model_name = os.path.join(args.log_dir, args.gan_type + '_test4')
+model_name = os.path.join(args.log_dir, args.gan_type + '_' + time.asctime( time.localtime(time.time()) ))
 
 ############################
     # set random_seed
@@ -134,7 +135,6 @@ print(netG)
 netD = Discriminator(args, att_size).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netD = nn.DataParallel(netD, list(range(args.ngpu)))
-netD.apply(weights_init)
 print(netD)
 
 ############################
@@ -260,7 +260,7 @@ for epoch in range(args.num_epochs):
         ############################
             # tensorboard summary
         ############################    
-        if iters % 10 == 0:  
+        if iters % 100 == 0:  
             vis_fake = (fake + 1) / 2
             vis_real = (real + 1) / 2
             writer.add_image("fake", vis_fake, iters)
