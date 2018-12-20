@@ -3,27 +3,68 @@ import torch.nn as nn
 from torchvision import models
 
 #########################################################################
+# Classifier Code
+class Classifier(nn.Module):
+    def __init__(self, args, att_size):
+        super(Classifier, self).__init__()
+        self.VGG = models.vgg19(pretrained=args.finetune)
+        self.att_linear = nn.Sequential(
+            nn.Linear(32768, 4096),
+            nn.ReLU(inplace=True),
+            nn.Linear(4096, att_size)
+        )
+
+    def forward(self, x):
+        # input is 3 x 256 x 256
+        x = self.VGG.features(x)
+        # input is 512 x 8 x 8
+        x = x.view(x.size(0), -1)
+        # state is 4096
+        x = self.att_linear(x)
+        # output is att_size
+
+        return x
+
+
+#########################################################################
 # Discriminator Code
 
 class Discriminator(nn.Module):
-    def __init__(self, args, att_size):
+    def __init__(self, args):
         super(Discriminator, self).__init__()
-        self.VGG = models.vgg19(pretrained=True)
-        self.dis_linear = nn.Linear(4096, 1)
-        self.att_linear = nn.Linear(4096, att_size, bias=False)
+        self.nc = args.nc
+        self.ndf = args.ndf
+        self.main = nn.Sequential(
+            # input is (nc) x 256 x 256
+            nn.Conv2d(self.nc, self.ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 128 x 128
+            nn.Conv2d(self.ndf, self.ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(self.ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 64 x 64
+            nn.Conv2d(self.ndf * 2, self.ndf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(self.ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 32 x 32
+            nn.Conv2d(self.ndf * 4, self.ndf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(self.ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 16 x 16
+            nn.Conv2d(self.ndf * 8, self.ndf * 16, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(self.ndf * 16),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*16) x 8 x 8
+            nn.Conv2d(self.ndf * 16, self.ndf * 32, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(self.ndf * 32),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*32) x 4 x 4
+            nn.Conv2d(self.ndf * 32, 1, 4, 1, 0, bias=False),
+        )
 
-    def forward(self, x):
-        x = self.VGG.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.VGG.classifier[0](x)
-        x = self.VGG.classifier[1](x)
-        x = self.VGG.classifier[2](x)
-        x = self.VGG.classifier[3](x)
-        x = self.VGG.classifier[4](x) 
-        dis = self.dis_linear(x)
-        att = self.att_linear(x)
-
-        return att, dis
+    def forward(self, input):
+        output = self.main(input)
+        return output
 
         
 

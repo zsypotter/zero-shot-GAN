@@ -13,7 +13,7 @@ import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import numpy as np
 import time
-from network import Generator, Discriminator
+from network import Generator, Discriminator, Classifier
 from tensorboardX import SummaryWriter
 from utils import *
 from data_loader import customData
@@ -29,30 +29,35 @@ parser.add_argument("--show_num", type=int, default=64)
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=64)
-parser.add_argument("--image_size", type=int, default=224)
+parser.add_argument("--image_size", type=int, default=256)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
 parser.add_argument("--ndf", type=int, default=16)
 parser.add_argument("--ngf", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=100)
-parser.add_argument("--lr", type=float, default=0.0002)
+parser.add_argument("--G_lr", type=float, default=0.0002)
+parser.add_argument("--D_lr", type=float, default=0.0002)
+parser.add_argument("--C_lr", type=float, default=0.0002)
+parser.add_argument("--G_beta1", type=float, default=0.5)
+parser.add_argument("--D_beta1", type=float, default=0.5)
+parser.add_argument("--C_beta1", type=float, default=0.9)
 parser.add_argument("--decay_begin_step", type=int, default=50)
 parser.add_argument("--decay_step", type=int, default=5)
 parser.add_argument("--decay_gama", type=float, default=0.9)
-parser.add_argument("--beta1", type=float, default=0.5)
 parser.add_argument("--gan_type", type=str, default="LogGAN")
 parser.add_argument("--gp_weight", type=float, default=10.)
 parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
-parser.add_argument("--gan_weight", type=float, default=1)
+parser.add_argument("--att_weight", type=float, default=1)
 parser.add_argument("--L2_weight", type=float, default=100)
+parser.add_argument("--finetune", type=bool, default=False)
 args = parser.parse_args()
 
 ############################
     # init model_name
 ############################
-model_name = os.path.join(args.log_dir, args.gan_type + '_' + time.asctime( time.localtime(time.time()) ))
+model_name = os.path.join(args.log_dir, args.gan_type + '_' + time.asctime(time.localtime(time.time())))
 
 ############################
     # set random_seed
@@ -132,10 +137,18 @@ netG.apply(weights_init)
 print(netG)
 
 # Create the Discriminator
-netD = Discriminator(args, att_size).to(device)
+netD = Discriminator(args).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netD = nn.DataParallel(netD, list(range(args.ngpu)))
+netD.apply(weights_init)
 print(netD)
+
+# Create the Classifier
+netC = Classifier(args, att_size).to(device)
+if (device.type == 'cuda') and (args.ngpu > 1):
+    netC = nn.DataParallel(netC, list(range(args.ngpu)))
+netC.apply(weights_init)
+print(netC)
 
 ############################
     # set loss
@@ -164,14 +177,16 @@ fixed_noise = torch.from_numpy(fixed_noise).float().to(device)
 ############################
     # set optimzer
 ############################
-optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
-optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
+optimizerD = optim.Adam(netD.parameters(), lr=args.G_lr, betas=(args.G_beta1, 0.999))
+optimizerG = optim.Adam(netG.parameters(), lr=args.D_lr, betas=(args.D_beta1, 0.999))
+optimizerC = optim.Adam(netC.parameters(), lr=args.C_lr, betas=(args.C_beta1, 0.999))
 mt = [i for i in range(args.decay_begin_step, args.num_epochs, args.decay_step)]
 schedulerD = optim.lr_scheduler.MultiStepLR(optimizerD, milestones=mt, gamma=args.decay_gama)
 schedulerG = optim.lr_scheduler.MultiStepLR(optimizerG, milestones=mt, gamma=args.decay_gama)
+schedulerC = optim.lr_scheduler.MultiStepLR(optimizerC, milestones=mt, gamma=args.decay_gama)
 
 ############################
-    # train_loop
+    # train and test
 ############################
 iters = 0
 writer = SummaryWriter(model_name)
@@ -181,111 +196,124 @@ for epoch in range(args.num_epochs):
     # For each batch in the dataloader
     schedulerD.step()
     schedulerG.step()
+    schedulerC.step()
+
+    ############################
+        # train loop
+    ############################
+    netD.train()
+    netG.train()
+    netC.train()
     train_ac = 0
     for i, data in enumerate(trainloader, 0):
-        ############################
-        # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-        ###########################
-        ## Train with all-real batch
         netD.zero_grad()
+        netG.zero_grad()
+        netC.zero_grad()
+
+        # read data
         real, train_att_label, att_label = data
         real =real.to(device)
         att_label = att_label.to(device)
         train_att_label = train_att_label.to(device)
         b_size = real.size(0)
+        
+        # train with log(X-1)
         dis_label = torch.full((b_size,), 1, device=device)
-
-        att, dis = netD(real)
-        dis = dis.view(-1)
+        dis_real = netD(real)
+        dis_real = dis_real.view(-1)
         if args.gan_type == "LogGAN":
-            dis = F.sigmoid(dis)
-        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
-        errD_real = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label)
-        dis_real = dis
-        att_real = att_criterion(similarity, train_att_label)
+            dis_real = F.sigmoid(dis_real)
+        errD_real = dis_criterion(dis_real, dis_label)
         errD_real.backward()
 
-        predict = torch.argmax(similarity, 1)
-        train_ac += (predict == train_att_label).sum().item()
+        # calculate similarity
+        att = netC(real)
+        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
 
-        ## Train with all-fake batch
-        # Generate batch of latent vectors
-        # prepare latent vectors
+        # train with log(G(z))
+        dis_label.fill_(0)
         if args.truncnorm:
             noise = truncated_z_sample(b_size, args.nz + att_size, args.tc_th, args.manualSeed)
         else:
             noise = np.random.normal(0, 1, (b_size, args.nz + att_size)) 
-        att_d = att.detach()   
-        noise[np.arange(b_size), :att_size] = att_d[np.arange(b_size)]
         noise = torch.from_numpy(noise).float().to(device)
-        # feed in network
+        noise[np.arange(b_size), :att_size] = att[np.arange(b_size)]
         fake = netG(noise)
-        dis_label.fill_(0)
-        att, dis = netD(fake.detach())
-        dis = dis.view(-1)
+        dis_fake = netD(fake.detach())
+        dis_fake = dis_fake.view(-1)
         if args.gan_type == "LogGAN":
-            dis = F.sigmoid(dis)
-        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
-        errD_fake = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label)
+            dis_fake = F.sigmoid(dis_fake)
+        errD_fake = dis_criterion(dis_fake, dis_label)
         errD_fake.backward()
+        loss_d = (errD_fake + errD_real) / 2
 
-        loss_d = (errD_real + errD_fake) / 2
-        optimizerD.step()
-
-        ############################
-        # (2) Update G network: maximize log(D(G(z)))
-        ###########################
-        netG.zero_grad()
+        # train with log(G(z) - 1)
         dis_label.fill_(1)
-        att, dis = netD(fake) 
-        dis = dis.view(-1)
+        if args.truncnorm:
+            noise = truncated_z_sample(b_size, args.nz + att_size, args.tc_th, args.manualSeed)
+        else:
+            noise = np.random.normal(0, 1, (b_size, args.nz + att_size)) 
+        noise = torch.from_numpy(noise).float().to(device)
+        noise[np.arange(b_size), :att_size] = att[np.arange(b_size)]
+        fake = netG(noise)
+        dis_fake = netD(fake)
+        dis_fake = dis_fake.view(-1)
         if args.gan_type == "LogGAN":
-            dis = F.sigmoid(dis)
-        similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
-        errG = args.gan_weight * dis_criterion(dis, dis_label) + att_criterion(similarity, train_att_label) + args.L2_weight * mse_criterion(fake, real)
-        dis_fake = dis
-        att_fake = att_criterion(similarity, train_att_label)
-        errG.backward()
-        loss_g = errG
+            dis_fake = F.sigmoid(dis_fake)
+        errG = dis_criterion(dis_fake, dis_label) + args.L2_weight * mse_criterion(fake, real)
+        errC = att_criterion(similarity, train_att_label)
+        loss_g = errG + args.att_weight * errC
+        loss_g.backward()
+
+        optimizerD.step()
         optimizerG.step()
+        optimizerC.step()
+
+        # calculate train_ac
+        predict = torch.argmax(similarity, 1)
+        train_ac += (predict == train_att_label).sum().item()
         
         ############################
             # print loss
         ############################ 
         if iters % 1 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tDIS: %.4f(%.4f)\tATT: %.4f(%.4f)'
+            loss_d = (errD_fake + errD_real) / 2
+            loss_g = errG
+            loss_c = errC
+
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tLoss_C: %.4f\tDIS: %.4f(%.4f)'
                   % (epoch, args.num_epochs, i, len(trainloader),
-                     loss_d.item(), loss_g.item(), dis_real.mean().item(), dis_fake.mean().item(), att_real.mean().item(), att_fake.mean().item()))
+                     loss_d.item(), loss_g.item(), loss_c.item(), dis_real.mean().item(), dis_fake.mean().item()))
 
         ############################
             # tensorboard summary
         ############################    
-        if iters % 100 == 0:  
+        if iters % 103 == 0:  
             vis_fake = (fake + 1) / 2
             vis_real = (real + 1) / 2
             writer.add_image("fake", vis_fake, iters)
             writer.add_image("real", vis_real, iters)
             writer.add_scalar("loss_d", loss_d, iters)
             writer.add_scalar("loss_g", loss_g, iters)
-            writer.add_scalar("dis_real", dis_real.mean(), iters)
-            writer.add_scalar("dis_fake", dis_fake.mean(), iters)
-            writer.add_scalar("att_real", att_real.mean(), iters)
-            writer.add_scalar("att_fake", att_fake.mean(), iters)
+            writer.add_scalar("loss_c", loss_c, iters)
         iters += 1
     train_ac = train_ac / len(trainloader.dataset)
 
     ############################
         # testR_loop
     ############################
+    netD.eval()
+    netG.eval()
+    netC.eval()
     testR_ac = 0
     for i, data in enumerate(testRloader, 0):
-        netD.zero_grad()
         real, testR_att_label, att_label = data
         real =real.to(device)
         testR_att_label = testR_att_label.to(device)
+        att_label = att_label.to(device)
         b_size = real.size(0)
 
-        att, dis = netD(real)
+        att = netC(real)
         similarity = torch.mm(att, torch.from_numpy(train_att_dict).float().to(device).t())
 
         predict = torch.argmax(similarity, 1)
@@ -297,13 +325,13 @@ for epoch in range(args.num_epochs):
     ############################
     testZ_ac = 0
     for i, data in enumerate(testZloader, 0):
-        netD.zero_grad()
         real, testZ_att_label, att_label = data
         real =real.to(device)
         testZ_att_label = testZ_att_label.to(device)
+        att_label = att_label.to(device)
         b_size = real.size(0)
 
-        att, dis = netD(real)
+        att = netC(real)
         similarity = torch.mm(att, torch.from_numpy(test_att_dict).float().to(device).t())
 
         predict = torch.argmax(similarity, 1)
