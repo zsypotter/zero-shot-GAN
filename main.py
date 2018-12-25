@@ -14,13 +14,14 @@ import torchvision.utils as vutils
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import time
 from IPython.display import HTML
 from network import Generator, Discriminator
 from tensorboardX import SummaryWriter
 from utils import *
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/Animals_with_Attributes2/JPEGImages")
+parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/CUB_200_2011/images")
 parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
@@ -32,7 +33,7 @@ parser.add_argument("--ndf", type=int, default=16)
 parser.add_argument("--ngf", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=100)
 parser.add_argument("--lr", type=float, default=0.0002)
-parser.add_argument("--decay_begin_step", type=int, default=100)
+parser.add_argument("--decay_begin_step", type=int, default=50)
 parser.add_argument("--decay_step", type=int, default=5)
 parser.add_argument("--decay_gama", type=float, default=0.9)
 parser.add_argument("--beta1", type=float, default=0.5)
@@ -43,7 +44,7 @@ parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
 args = parser.parse_args()
 
-model_name = os.path.join(args.log_dir, args.gan_type)
+model_name = os.path.join(args.log_dir, args.gan_type + "_" + time.asctime(time.localtime(time.time())))
 
 #manualSeed = random.randint(1, 10000) # use if you want new results
 print("Random Seed: ", args.manualSeed)
