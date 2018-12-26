@@ -107,13 +107,8 @@ real_label = 1
 fake_label = 0
 
 # Setup Adam optimizers for both G and D
-if args.gan_type == "WGAN":
-    optimizerD = optim.SGD(netD.parameters(), lr = args.lr, momentum=0.9)
-    optimizerG = optim.SGD(netG.parameters(), lr = args.lr, momentum=0.9)
-else:
-    optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
-    optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
-
+optimizerD = optim.SGD(netD.parameters(), lr=args.lr)  
+optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 mt = [i for i in range(args.decay_begin_step, args.num_epochs, args.decay_step)]
 
 schedulerD = optim.lr_scheduler.MultiStepLR(optimizerD, milestones=mt, gamma=args.decay_gama)

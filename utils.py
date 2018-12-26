@@ -56,11 +56,13 @@ def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
         create_graph=True)[0]
     gp = ((gradients.view(b_size, -1).norm(2, dim=1) - 1).pow(2)).mean()
 
-    loss_d_without_gp = (-real_dis + fake_dis).mean()
     real_aux_loss = aux_criterion(real_aux, real_aux_label)
     fake_aux_loss = aux_criterion(fake_aux, fake_aux_label)
-    loss_d = loss_d_without_gp + args.gp_weight * gp + real_aux_loss + fake_aux_loss
-    loss_d.backward()
+    errD_real = -real_dis.mean() + args.gp_weight * gp + real_aux_loss
+    errD_fake = fake_dis.mean() + args.gp_weight * gp + fake_aux_loss
+    errD_fake.backward(retain_graph=True)
+    errD_real.backward()
+    loss_d = errD_fake + errD_real
     optimizerD.step()
 
 
