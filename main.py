@@ -22,6 +22,7 @@ from utils import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/CUB_200_2011/images")
+parser.add_argument("--num_class", type=int, default=200)
 parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
@@ -42,6 +43,8 @@ parser.add_argument("--gp_weight", type=float, default=10.)
 parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
+parser.add_argument("--display_step", type=int, default=100)
+parser.add_argument("--display_num", type=int, default=64)
 args = parser.parse_args()
 
 model_name = os.path.join(args.log_dir, args.gan_type + "_" + time.asctime(time.localtime(time.time())))
@@ -87,17 +90,29 @@ criterion = nn.BCELoss()
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
 if args.truncnorm:
-    fixed_noise = torch.from_numpy(truncated_z_sample(64, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+    fixed_noise = truncated_z_sample(args.display_num, args.nz + args.num_class, args.tc_th, args.manualSeed)
+    print("Use Truncnorm", args.tc_th)
 else:
-    fixed_noise = torch.randn(64, args.nz, 1, 1, device=device)
+    fixed_noise = np.random.randn(args.display_num, args.nz + args.num_class)
+label = np.arange(args.display_num)
+label_onehot = np.zeros((args.display_num, args.num_class))
+label_onehot[np.arange(args.display_num), label[np.arange(args.display_num)]] = 1
+fixed_noise[np.arange(args.display_num), :args.num_class] = label_onehot[np.arange(args.display_num)]
+fixed_noise = torch.from_numpy(fixed_noise).float().to(device)
+
+
 
 # Establish convention for real and fake labels during training
 real_label = 1
 fake_label = 0
 
 # Setup Adam optimizers for both G and D
-optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
-optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
+if args.gan_type == "WGAN":
+    optimizerD = optim.SGD(netD.parameters(), lr = args.lr, momentum=0.9)
+    optimizerG = optim.SGD(netG.parameters(), lr = args.lr, momentum=0.9)
+else:
+    optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
+    optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 
 mt = [i for i in range(args.decay_begin_step, args.num_epochs, args.decay_step)]
 
@@ -123,25 +138,22 @@ for epoch in range(args.num_epochs):
     for i, data in enumerate(dataloader, 0):
         
         if args.gan_type == "WGAN":
-            loss_d, loss_g = wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args)
+            loss_d, loss_g, real_dis, fake_dis, real_aux_loss, fake_aux_loss = wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args)
         elif args.gan_type == "LogGAN" or args.gan_type == "MseGAN":
-            loss_d, loss_g = gan(data, netD, netG, optimizerD, optimizerG, device, args)
+            loss_d, loss_g, real_dis, fake_dis, real_aux_loss, fake_aux_loss = gan(data, netD, netG, optimizerD, optimizerG, device, args)
         
         # Output training stats
         if i % 1 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\t'
+            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tdis: %.4f(%.4f)\taux_loss: %.4f(%.4f)'
                   % (epoch, args.num_epochs, i, len(dataloader),
-                     loss_d.item(), loss_g.item()))
+                     loss_d.item(), loss_g.item(), real_dis.mean().item(), fake_dis.mean().item(), real_aux_loss.item(), fake_aux_loss.item()))
         
         
         # Check how the generator is doing by saving G's output on fixed_noise
-        if (iters % 100 == 0) or ((epoch == args.num_epochs-1) and (i == len(dataloader)-1)):
+        if (iters % args.display_step == 0) or ((epoch == args.num_epochs-1) and (i == len(dataloader)-1)):
             fake = netG(fixed_noise)
-            real = data[0].to(device)
             vis_fake = (fake + 1) / 2
-            vis_real = (real + 1) / 2
             writer.add_image("fake", vis_fake, iters)
-            writer.add_image("real", vis_real[0:64], iters)
             
         iters += 1
 

@@ -10,7 +10,8 @@ class Discriminator(nn.Module):
         self.nc = args.nc
         self.nz = args.nz
         self.ndf = args.ndf
-        self.main = nn.Sequential(
+        self.num_class = args.num_class
+        self.feature = nn.Sequential(
             # input is (nc) x 256 x 256
             nn.Conv2d(self.nc, self.ndf, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
@@ -34,14 +35,19 @@ class Discriminator(nn.Module):
             nn.Conv2d(self.ndf * 16, self.ndf * 32, 4, 2, 1, bias=False),
             nn.BatchNorm2d(self.ndf * 32),
             nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(self.ndf * 32, 1, 4, 1, 0, bias=False),
+            # state size. (ndf*32) x 4 x 4
+            #nn.Conv2d(self.ndf * 32, 1, 4, 1, 0, bias=False),
             #nn.Sigmoid()
         )
+        self.aux_linear = nn.Linear(self.ndf * 32 * 4 * 4, self.num_class)
+        self.dis_linear = nn.Linear(self.ndf * 32 * 4 * 4, 1)
 
     def forward(self, input):
-        output = self.main(input)
-        return output
+        feature = self.feature(input)
+        feature = feature.view(feature.size(0), -1)
+        aux = self.aux_linear(feature)
+        dis = self.dis_linear(feature)
+        return aux, dis
 
 #########################################################################
 # Generator Code
@@ -50,7 +56,7 @@ class Generator(nn.Module):
     def __init__(self, args):
         super(Generator, self).__init__()
         self.nc = args.nc
-        self.nz = args.nz
+        self.nz = args.nz + args.num_class
         self.init_size = args.image_size // 8
 
         self.linear = nn.Linear(self.nz, self.init_size * self.init_size * 64)

@@ -7,7 +7,7 @@ from scipy.stats import truncnorm
 
 def truncated_z_sample(batch_size, dim_z, threshold=2, seed=None, truncation=1.):
     state = None if seed is None else np.random.RandomState(seed)
-    values = truncnorm.rvs(-threshold, threshold, size=(batch_size, dim_z, 1, 1), random_state=state)
+    values = truncnorm.rvs(-threshold, threshold, size=(batch_size, dim_z), random_state=state)
     return truncation * values
 
 def weights_init(m):
@@ -19,32 +19,47 @@ def weights_init(m):
         nn.init.constant_(m.bias.data, 0)
 
 def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
+    aux_criterion = nn.CrossEntropyLoss()
+    aux_criterion = aux_criterion.to(device)
+
     ############################
     # (1) Update D network
     ###########################
     netD.zero_grad()
 
-    real = data[0].to(device)
+    real, real_aux_label = data
+    real = real.to(device)
+    real_aux_label = real_aux_label.to(device)
     b_size = real.size(0)
-    real_d = netD(real)
+    real_aux, real_dis = netD(real)
+
     if args.truncnorm:
-        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+        noise = truncated_z_sample(b_size, args.nz + args.num_class, args.tc_th, args.manualSeed)
     else:
-        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
-    fake = netG(noise).detach()
-    fake_d = netD(fake)
+        noise = np.random.randn(b_size, args.nz + args.num_class)
+    aux_label = np.random.randint(0, args.num_class, b_size)
+    aux_label_onehot = np.zeros((b_size, args.num_class))
+    aux_label_onehot[np.arange(b_size), aux_label[np.arange(b_size)]] = 1
+    noise[np.arange(b_size), :args.num_class] = aux_label_onehot[np.arange(b_size)]
+    noise = torch.from_numpy(noise).float().to(device)
+
+    fake = netG(noise)
+    fake_aux_label = torch.from_numpy(aux_label).to(device)
+    fake_aux, fake_dis = netD(fake.detach())
 
     epsilon = torch.rand(b_size, 1, 1, 1).to(device)
     interpolates = torch.tensor((epsilon * real + (1 - epsilon) * fake).data, requires_grad=True)
     gradients = torch.autograd.grad(
-        netD(interpolates).view(b_size),
+        netD(interpolates)[1].view(b_size),
         interpolates,
         grad_outputs=torch.ones(b_size).to(device),
         create_graph=True)[0]
     gp = ((gradients.view(b_size, -1).norm(2, dim=1) - 1).pow(2)).mean()
 
-    loss_d_without_gp = (-real_d + fake_d).mean()
-    loss_d = loss_d_without_gp + args.gp_weight * gp
+    loss_d_without_gp = (-real_dis + fake_dis).mean()
+    real_aux_loss = aux_criterion(real_aux, real_aux_label)
+    fake_aux_loss = aux_criterion(fake_aux, fake_aux_label)
+    loss_d = loss_d_without_gp + args.gp_weight * gp + real_aux_loss + fake_aux_loss
     loss_d.backward()
     optimizerD.step()
 
@@ -53,66 +68,80 @@ def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
     # (2) Update G network
     ###########################
     netG.zero_grad()
-
-    if args.truncnorm:
-        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
-    else:
-        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
-    fake = netG(noise)
-    fake_d = netD(fake).mean()
-
-    loss_g = -fake_d
+    fake_aux, fake_dis = netD(fake)
+    fake_aux_loss = aux_criterion(fake_aux, fake_aux_label)
+    loss_g = -fake_dis.mean() + fake_aux_loss
     loss_g.backward()
     optimizerG.step()
 
-    return loss_d, loss_g
+    return loss_d, loss_g, real_dis, fake_dis, real_aux_loss, fake_aux_loss
 
 def gan(data, netD, netG, optimizerD, optimizerG, device, args):
     if args.gan_type == "LogGAN":
-        criterion = nn.BCELoss()
+        dis_criterion = nn.BCELoss()
     else:
-        criterion = nn.MSELoss()
+        dis_criterion = nn.MSELoss()
+    aux_criterion = nn.CrossEntropyLoss()
+    dis_criterion = dis_criterion.to(device)
+    aux_criterion = aux_criterion.to(device)
+
     ############################
     # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
     ###########################
     ## Train with all-real batch
     netD.zero_grad()
-    real = data[0].to(device)
+    real, aux_label = data
+    real = real.to(device)
+    aux_label = aux_label.to(device)
     b_size = real.size(0)
-    label = torch.full((b_size,), 1, device=device)
-    output = netD(real).view(-1)
+    dis_label = torch.full((b_size,), 1, device=device)
+    real_aux, real_dis = netD(real)
+    real_dis = real_dis.view(-1)
     if args.gan_type == "LogGAN":
-        output = F.sigmoid(output)
-    errD_real = criterion(output, label)
+        real_dis = F.sigmoid(real_dis)
+    real_aux_loss = aux_criterion(real_aux, aux_label)
+    errD_real = dis_criterion(real_dis, dis_label) + real_aux_loss
     errD_real.backward()
 
     ## Train with all-fake batch
     # Generate batch of latent vectors
     if args.truncnorm:
-        noise = torch.from_numpy(truncated_z_sample(b_size, args.nz, args.tc_th, args.manualSeed)).float().to(device)
+        noise = truncated_z_sample(b_size, args.nz + args.num_class, args.tc_th, args.manualSeed)
     else:
-        noise = torch.randn(b_size, args.nz, 1, 1, device=device)
+        noise = np.random.randn(b_size, args.nz + args.num_class)
+    aux_label = np.random.randint(0, args.num_class, b_size)
+    aux_label_onehot = np.zeros((b_size, args.num_class))
+    aux_label_onehot[np.arange(b_size), aux_label[np.arange(b_size)]] = 1
+    noise[np.arange(b_size), :args.num_class] = aux_label_onehot[np.arange(b_size)]
+    noise = torch.from_numpy(noise).float().to(device)
+
+    aux_label = torch.from_numpy(aux_label).to(device)
+
     fake = netG(noise)
-    label.fill_(0)
-    output = netD(fake.detach()).view(-1)
+    dis_label.fill_(0)
+    fake_aux, fake_dis = netD(fake.detach())
+    fake_dis = fake_dis.view(-1)
     if args.gan_type == "LogGAN":
-        output = F.sigmoid(output)
-    errD_fake = criterion(output, label)
+        fake_dis = F.sigmoid(fake_dis)
+    fake_aux_loss = aux_criterion(fake_aux, aux_label)
+    errD_fake = dis_criterion(fake_dis, dis_label) + fake_aux_loss
     errD_fake.backward()
-    loss_d = errD_real + errD_fake
+    loss_d = (errD_real + errD_fake) / 2
     optimizerD.step()
 
     ############################
     # (2) Update G network: maximize log(D(G(z)))
     ###########################
     netG.zero_grad()
-    label.fill_(1)
-    output = netD(fake).view(-1)
+    dis_label.fill_(1)
+    fake_aux, fake_dis = netD(fake)
+    fake_dis = fake_dis.view(-1)
     if args.gan_type == "LogGAN":
-        output = F.sigmoid(output)
-    errG = criterion(output, label)
+        fake_dis = F.sigmoid(fake_dis)
+    fake_aux_loss = aux_criterion(fake_aux, aux_label)
+    errG = dis_criterion(fake_dis, dis_label) + fake_aux_loss
     errG.backward()
     loss_g = errG
     optimizerG.step()
     
-    return loss_d, loss_g
+    return loss_d, loss_g, real_dis, fake_dis, real_aux_loss, fake_aux_loss
