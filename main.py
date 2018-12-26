@@ -25,7 +25,7 @@ parser.add_argument("--dataroot", type=str, default="/data2/zhousiyu/dataset/CUB
 parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--workers", type=int, default=2)
 parser.add_argument("--ngpu", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--image_size", type=int, default=256)
 parser.add_argument("--nc", type=int, default=3)
 parser.add_argument("--nz", type=int, default=100)
@@ -66,7 +66,7 @@ dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
 device = torch.device("cuda:0" if (torch.cuda.is_available() and args.ngpu > 0) else "cpu")
 
 # Create the generator
-netG = Generator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size).to(device)
+netG = Generator(args).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netG = nn.DataParallel(netG, list(range(args.ngpu)))
 netG.apply(weights_init)
@@ -74,7 +74,7 @@ print(netG)
 
 
 # Create the Discriminator
-netD = Discriminator(args.ngpu, args.nc, args.nz, args.ndf, args.ngf, args.image_size).to(device)
+netD = Discriminator(args).to(device)
 if (device.type == 'cuda') and (args.ngpu > 1):
     netD = nn.DataParallel(netD, list(range(args.ngpu)))
 netD.apply(weights_init)
