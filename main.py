@@ -107,7 +107,7 @@ real_label = 1
 fake_label = 0
 
 # Setup Adam optimizers for both G and D
-optimizerD = optim.SGD(netD.parameters(), lr=args.lr)  
+optimizerD = optim.Adam(netD.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
 mt = [i for i in range(args.decay_begin_step, args.num_epochs, args.decay_step)]
 
