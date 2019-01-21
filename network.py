@@ -5,7 +5,7 @@ import torch.nn as nn
 # Discriminator Code
 
 class Discriminator(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, att_size):
         super(Discriminator, self).__init__()
         self.nc = args.nc
         self.nz = args.nz
@@ -39,7 +39,7 @@ class Discriminator(nn.Module):
             #nn.Conv2d(self.ndf * 32, 1, 4, 1, 0, bias=False),
             #nn.Sigmoid()
         )
-        self.aux_linear = nn.Linear(self.ndf * 32 * 4 * 4, self.num_class)
+        self.aux_linear = nn.Linear(self.ndf * 32 * 4 * 4, att_size)
         self.dis_linear = nn.Linear(self.ndf * 32 * 4 * 4, 1)
 
     def forward(self, input):
@@ -53,10 +53,10 @@ class Discriminator(nn.Module):
 # Generator Code
         
 class Generator(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, att_size):
         super(Generator, self).__init__()
         self.nc = args.nc
-        self.nz = args.nz + args.num_class
+        self.nz = args.nz + att_size
         self.init_size = args.image_size // 8
 
         self.linear = nn.Linear(self.nz, self.init_size * self.init_size * 64)

@@ -18,7 +18,7 @@ def weights_init(m):
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
 
-def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
+def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args, att_size):
     aux_criterion = nn.CrossEntropyLoss()
     aux_criterion = aux_criterion.to(device)
 
@@ -78,7 +78,7 @@ def wgan_with_gp(data, netD, netG, optimizerD, optimizerG, device, args):
 
     return loss_d, loss_g, real_dis, fake_dis, real_aux_loss, fake_aux_loss
 
-def gan(data, netD, netG, optimizerD, optimizerG, device, args):
+def gan(data, netD, netG, optimizerD, optimizerG, device, args, att_size, train_att_dict, test_att_dict, att_dict):
     if args.gan_type == "LogGAN":
         dis_criterion = nn.BCELoss()
     else:
@@ -87,37 +87,37 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args):
     dis_criterion = dis_criterion.to(device)
     aux_criterion = aux_criterion.to(device)
 
+    train_att_dict_cuda = torch.from_numpy(train_att_dict).float().to(device)
+    test_att_dict_cuda = torch.from_numpy(test_att_dict).float().to(device)
+    att_dict_cuda = torch.from_numpy(att_dict).float().to(device)
+
     ############################
     # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
     ###########################
     ## Train with all-real batch
     netD.zero_grad()
-    real, aux_label = data
+    real, train_aux_label, aux_label = data
     real = real.to(device)
-    aux_label = aux_label.to(device)
     b_size = real.size(0)
     dis_label = torch.full((b_size,), 1, device=device)
     real_aux, real_dis = netD(real)
     real_dis = real_dis.view(-1)
     if args.gan_type == "LogGAN":
         real_dis = F.sigmoid(real_dis)
-    real_aux_loss = aux_criterion(real_aux, aux_label)
+    
+    similarity = torch.mm(real_aux, train_att_dict_cuda.t())
+    real_aux_loss = aux_criterion(similarity, train_aux_label.to(device))
     errD_real = dis_criterion(real_dis, dis_label) + real_aux_loss
     errD_real.backward()
 
     ## Train with all-fake batch
     # Generate batch of latent vectors
     if args.truncnorm:
-        noise = truncated_z_sample(b_size, args.nz + args.num_class, args.tc_th, args.manualSeed)
+        noise = truncated_z_sample(b_size, args.nz + att_size, args.tc_th, args.manualSeed)
     else:
-        noise = np.random.randn(b_size, args.nz + args.num_class)
-    aux_label = np.random.randint(0, args.num_class, b_size)
-    aux_label_onehot = np.zeros((b_size, args.num_class))
-    aux_label_onehot[np.arange(b_size), aux_label[np.arange(b_size)]] = 1
-    noise[np.arange(b_size), :args.num_class] = aux_label_onehot[np.arange(b_size)]
+        noise = np.random.randn(b_size, args.nz + att_size)
+    noise[np.arange(b_size), :att_size] = train_att_dict[train_aux_label]
     noise = torch.from_numpy(noise).float().to(device)
-
-    aux_label = torch.from_numpy(aux_label).to(device)
 
     fake = netG(noise)
     dis_label.fill_(0)
@@ -125,7 +125,8 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args):
     fake_dis = fake_dis.view(-1)
     if args.gan_type == "LogGAN":
         fake_dis = F.sigmoid(fake_dis)
-    fake_aux_loss = aux_criterion(fake_aux, aux_label)
+    similarity = torch.mm(fake_aux, train_att_dict_cuda.t())
+    fake_aux_loss = aux_criterion(similarity, train_aux_label.to(device))
     errD_fake = dis_criterion(fake_dis, dis_label) + fake_aux_loss
     errD_fake.backward()
     loss_d = (errD_real + errD_fake) / 2
@@ -140,7 +141,8 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args):
     fake_dis = fake_dis.view(-1)
     if args.gan_type == "LogGAN":
         fake_dis = F.sigmoid(fake_dis)
-    fake_aux_loss = aux_criterion(fake_aux, aux_label)
+    similarity = torch.mm(fake_aux, train_att_dict_cuda.t())
+    fake_aux_loss = aux_criterion(similarity, train_aux_label.to(device))
     errG = dis_criterion(fake_dis, dis_label) + fake_aux_loss
     errG.backward()
     loss_g = errG
