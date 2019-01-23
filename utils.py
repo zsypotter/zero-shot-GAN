@@ -83,9 +83,11 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args, att_size, train_
         dis_criterion = nn.BCELoss()
     else:
         dis_criterion = nn.MSELoss()
+    mse_criterion = nn.MSELoss()
     aux_criterion = nn.CrossEntropyLoss()
     dis_criterion = dis_criterion.to(device)
     aux_criterion = aux_criterion.to(device)
+    mse_criterion = mse_criterion.to(device)
 
     train_att_dict_cuda = torch.from_numpy(train_att_dict).float().to(device)
     test_att_dict_cuda = torch.from_numpy(test_att_dict).float().to(device)
@@ -107,6 +109,7 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args, att_size, train_
     
     similarity = torch.mm(real_aux, train_att_dict_cuda.t())
     real_aux_loss = aux_criterion(similarity, train_aux_label.to(device))
+    #real_aux_loss = mse_criterion(real_aux, real_aux)
     errD_real = dis_criterion(real_dis, dis_label) + real_aux_loss
     errD_real.backward()
 
@@ -116,7 +119,7 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args, att_size, train_
         noise = truncated_z_sample(b_size, args.nz + att_size, args.tc_th, args.manualSeed)
     else:
         noise = np.random.randn(b_size, args.nz + att_size)
-    noise[np.arange(b_size), :att_size] = train_att_dict[train_aux_label]
+    noise[np.arange(b_size), :att_size] = train_att_dict[train_aux_label, :att_size]
     noise = torch.from_numpy(noise).float().to(device)
 
     fake = netG(noise)
@@ -127,6 +130,7 @@ def gan(data, netD, netG, optimizerD, optimizerG, device, args, att_size, train_
         fake_dis = F.sigmoid(fake_dis)
     similarity = torch.mm(fake_aux, train_att_dict_cuda.t())
     fake_aux_loss = aux_criterion(similarity, train_aux_label.to(device))
+    #fake_aux_loss = mse_criterion(fake_aux, fake_aux)
     errD_fake = dis_criterion(fake_dis, dis_label) + fake_aux_loss
     errD_fake.backward()
     loss_d = (errD_real + errD_fake) / 2

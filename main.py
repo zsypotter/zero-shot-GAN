@@ -19,8 +19,8 @@ from data_loader import customData
 from utils import *
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="/data2/zhousiyu/dataset/CUB_200_2011/zeroshot")
-parser.add_argument("--image_dir", type=str, default="/data2/zhousiyu/dataset/CUB_200_2011/images")
+parser.add_argument("--dataset", type=str, default="/home/disk1/zhousiyu/dataset/CUB_200_2011/zeroshot")
+parser.add_argument("--image_dir", type=str, default="/home/disk1/zhousiyu/dataset/CUB_200_2011/images")
 parser.add_argument("--num_class", type=int, default=200)
 parser.add_argument("--log_dir", type=str, default="runs")
 parser.add_argument("--workers", type=int, default=2)
@@ -28,7 +28,7 @@ parser.add_argument("--ngpu", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--image_size", type=int, default=256)
 parser.add_argument("--nc", type=int, default=3)
-parser.add_argument("--nz", type=int, default=312)
+parser.add_argument("--nz", type=int, default=100)
 parser.add_argument("--ndf", type=int, default=16)
 parser.add_argument("--ngf", type=int, default=16)
 parser.add_argument("--num_epochs", type=int, default=10000)
@@ -42,7 +42,7 @@ parser.add_argument("--gp_weight", type=float, default=10.)
 parser.add_argument("--tc_th", type=float, default=2.)
 parser.add_argument("--manualSeed", type=int, default=999)
 parser.add_argument("--truncnorm", type=bool, default=False)
-parser.add_argument("--display_step", type=int, default=25)
+parser.add_argument("--display_step", type=int, default=100)
 parser.add_argument("--display_num", type=int, default=64)
 parser.add_argument("--process_att", type=bool, default=False)
 args = parser.parse_args()
@@ -128,7 +128,7 @@ if args.truncnorm:
     print("Use Truncnorm", args.tc_th)
 else:
     fixed_noise = np.random.randn(args.display_num, args.nz + att_size)
-fixed_noise[np.arange(args.display_num), :att_size] = att_dict[np.arange(args.display_num)]
+fixed_noise[np.arange(args.display_num), :att_size] = att_dict[np.arange(args.display_num), :att_size]
 fixed_noise = torch.from_numpy(fixed_noise).float().to(device)
 
 
